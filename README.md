@@ -216,6 +216,40 @@ submap = reset
 bind=$mainMod,g,exec,hyprctl keyword cursor:inactive_timeout 0; hyprctl keyword cursor:hide_on_key_press false; hyprctl dispatch submap cursor
 ```
 
+## Multi-monitor support
+
+By default, `wl-kbptr` shows its overlay only on the currently focused output. The `--all-outputs` / `-A` flag spans the overlay across all connected outputs simultaneously, so you don't need to focus the right display before invoking it.
+
+> **Note:** Multi-monitor mode is currently implemented for **tile mode only**. Floating mode multi-monitor support is not yet available.
+
+### Usage
+
+```bash
+wl-kbptr -A -o modes=tile,click
+```
+
+Or enable it permanently in your configuration file:
+
+```ini
+[general]
+all_outputs=true
+```
+
+### How it works
+
+- One overlay surface is created per output, each covering its respective monitor.
+- The first surface gets exclusive keyboard focus; the compositor routes all key events there regardless of which monitor the cursor is on.
+- All surfaces share a single label namespace spanning the global bounding box of all outputs.
+- After you type a label, the cursor moves to the correct output automatically.
+
+### Cell density
+
+Cell size is computed from the **average logical monitor area** rather than the full bounding box. This keeps cell density consistent with single-output mode — each monitor gets roughly the same number of cells as it would on its own. With multiple monitors, most labels will require more keystrokes (3 with 3 monitors) since the total number of cells scales with the number of outputs.
+
+### Dead zones
+
+If your monitors are not perfectly aligned (e.g. one is above or below the others), there may be empty regions in the bounding box not covered by any output. Cells whose centre falls in such a gap snap to the nearest monitor boundary rather than moving the cursor off-screen.
+
 ## Configuration
 
 `wl-kbptr` can be configured with a configuration file. See [`config.example`](./config.example) for an example and run `wl-kbptr --help-config` for help.
