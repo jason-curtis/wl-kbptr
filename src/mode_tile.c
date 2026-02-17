@@ -64,13 +64,65 @@ void *tile_mode_enter(struct state *state, struct rect area) {
         label_symbols_from_str(state->config.mode_tile.label_symbols);
     if (ms->label_symbols == NULL) {
         ms->label_selection = NULL;
+        ms->cell_idx_map    = NULL;
         state->running      = false;
         return ms;
     }
 
-    ms->label_selection = label_selection_new(
-        ms->label_symbols, ms->sub_area_rows * ms->sub_area_columns
-    );
+    int total_cells  = ms->sub_area_rows * ms->sub_area_columns;
+    ms->cell_idx_map = NULL;
+
+    if (state->config.general.all_outputs &&
+        !wl_list_empty(&state->overlay_surfaces)) {
+        // Only assign labels to cells whose centre falls on a real output,
+        // skipping dead-zone gaps between monitors.
+        int *tmp       = malloc(total_cells * sizeof(int));
+        int  num_valid = 0;
+
+        for (int ci = 0; ci < total_cells; ci++) {
+            int column = ci / ms->sub_area_rows;
+            int row    = ci % ms->sub_area_rows;
+
+            int x = column * ms->sub_area_width +
+                    min(column, ms->sub_area_width_off);
+            int w = ms->sub_area_width +
+                    (column < ms->sub_area_width_off ? 1 : 0);
+            int y =
+                row * ms->sub_area_height + min(row, ms->sub_area_height_off);
+            int h = ms->sub_area_height +
+                    (row < ms->sub_area_height_off ? 1 : 0);
+
+            int32_t cx = ms->area.x + x + w / 2;
+            int32_t cy = ms->area.y + y + h / 2;
+
+            bool           on_output = false;
+            struct output *out;
+            wl_list_for_each (out, &state->outputs, link) {
+                if (cx >= out->x && cx < out->x + out->width &&
+                    cy >= out->y && cy < out->y + out->height) {
+                    on_output = true;
+                    break;
+                }
+            }
+            if (on_output) {
+                tmp[num_valid++] = ci;
+            }
+        }
+
+        if (num_valid < total_cells) {
+            ms->cell_idx_map = malloc(num_valid * sizeof(int));
+            memcpy(ms->cell_idx_map, tmp, num_valid * sizeof(int));
+            ms->label_selection =
+                label_selection_new(ms->label_symbols, num_valid);
+        } else {
+            ms->label_selection =
+                label_selection_new(ms->label_symbols, total_cells);
+        }
+        free(tmp);
+    } else {
+        ms->label_selection =
+            label_selection_new(ms->label_symbols, total_cells);
+    }
 
     ms->label_font_face = cairo_toy_font_face_create(
         state->config.mode_tile.label_font_family, CAIRO_FONT_SLANT_NORMAL,
@@ -131,10 +183,12 @@ static bool tile_mode_key(
 
         label_selection_append(ms->label_selection, symbol_idx);
 
-        int idx = label_selection_to_idx(ms->label_selection);
-        if (idx >= 0) {
+        int label_idx = label_selection_to_idx(ms->label_selection);
+        if (label_idx >= 0) {
+            int cell_idx =
+                ms->cell_idx_map ? ms->cell_idx_map[label_idx] : label_idx;
             enter_next_mode(
-                state, idx_to_rect(ms, idx, ms->area.x, ms->area.y)
+                state, idx_to_rect(ms, cell_idx, ms->area.x, ms->area.y)
             );
         }
         return true;
@@ -165,68 +219,69 @@ void tile_mode_render(struct state *state, void *mode_state, cairo_t *cairo) {
     cairo_set_line_width(cairo, 1);
     cairo_stroke(cairo);
 
-    label_selection_t *curr_label = label_selection_new(
-        ms->label_symbols, ms->sub_area_columns * ms->sub_area_rows
-    );
+    int num_labels = ms->label_selection->num_labels;
+    label_selection_t *curr_label =
+        label_selection_new(ms->label_symbols, num_labels);
     label_selection_set_from_idx(curr_label, 0);
 
     int  label_str_max_len = label_selection_str_max_len(curr_label) + 1;
     char label_selected_str[label_str_max_len];
     char label_unselected_str[label_str_max_len];
 
-    for (int i = 0; i < ms->sub_area_columns; i++) {
-        for (int j = 0; j < ms->sub_area_rows; j++) {
-            const int x =
-                i * ms->sub_area_width + min(i, ms->sub_area_width_off);
-            const int w =
-                ms->sub_area_width + (i < ms->sub_area_width_off ? 1 : 0);
-            const int y =
-                j * ms->sub_area_height + min(j, ms->sub_area_height_off);
-            const int h =
-                ms->sub_area_height + (j < ms->sub_area_height_off ? 1 : 0);
+    for (int li = 0; li < num_labels; li++) {
+        int ci     = ms->cell_idx_map ? ms->cell_idx_map[li] : li;
+        int column = ci / ms->sub_area_rows;
+        int row    = ci % ms->sub_area_rows;
 
-            const bool selectable =
-                label_selection_is_included(curr_label, ms->label_selection);
+        const int x =
+            column * ms->sub_area_width + min(column, ms->sub_area_width_off);
+        const int w =
+            ms->sub_area_width + (column < ms->sub_area_width_off ? 1 : 0);
+        const int y =
+            row * ms->sub_area_height + min(row, ms->sub_area_height_off);
+        const int h =
+            ms->sub_area_height + (row < ms->sub_area_height_off ? 1 : 0);
 
-            cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-            if (selectable) {
-                cairo_set_source_u32(cairo, config->selectable_bg_color);
-                cairo_rectangle(cairo, x, y, w, h);
-                cairo_fill(cairo);
+        const bool selectable =
+            label_selection_is_included(curr_label, ms->label_selection);
 
-                cairo_set_source_u32(cairo, config->selectable_border_color);
-                cairo_rectangle(cairo, x + .5, y + .5, w - 1, h - 1);
-                cairo_set_line_width(cairo, 1);
-                cairo_stroke(cairo);
+        cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+        if (selectable) {
+            cairo_set_source_u32(cairo, config->selectable_bg_color);
+            cairo_rectangle(cairo, x, y, w, h);
+            cairo_fill(cairo);
 
-                cairo_text_extents_t te_all;
-                label_selection_str(curr_label, label_selected_str);
-                cairo_text_extents(cairo, label_selected_str, &te_all);
+            cairo_set_source_u32(cairo, config->selectable_border_color);
+            cairo_rectangle(cairo, x + .5, y + .5, w - 1, h - 1);
+            cairo_set_line_width(cairo, 1);
+            cairo_stroke(cairo);
 
-                label_selection_str_split(
-                    curr_label, label_selected_str, label_unselected_str,
-                    ms->label_selection->next
-                );
+            cairo_text_extents_t te_all;
+            label_selection_str(curr_label, label_selected_str);
+            cairo_text_extents(cairo, label_selected_str, &te_all);
 
-                cairo_text_extents_t te_selected, te_unselected;
-                cairo_text_extents(cairo, label_selected_str, &te_selected);
-                cairo_text_extents(cairo, label_unselected_str, &te_unselected);
+            label_selection_str_split(
+                curr_label, label_selected_str, label_unselected_str,
+                ms->label_selection->next
+            );
 
-                // Centers the label.
-                cairo_move_to(
-                    cairo,
-                    x + (w - te_selected.x_advance - te_unselected.x_advance) /
-                            2,
-                    y + (int)((h + te_all.height) / 2)
-                );
-                cairo_set_source_u32(cairo, config->label_select_color);
-                cairo_show_text(cairo, label_selected_str);
-                cairo_set_source_u32(cairo, config->label_color);
-                cairo_show_text(cairo, label_unselected_str);
-            }
+            cairo_text_extents_t te_selected, te_unselected;
+            cairo_text_extents(cairo, label_selected_str, &te_selected);
+            cairo_text_extents(cairo, label_unselected_str, &te_unselected);
 
-            label_selection_incr(curr_label);
+            // Centers the label.
+            cairo_move_to(
+                cairo,
+                x + (w - te_selected.x_advance - te_unselected.x_advance) / 2,
+                y + (int)((h + te_all.height) / 2)
+            );
+            cairo_set_source_u32(cairo, config->label_select_color);
+            cairo_show_text(cairo, label_selected_str);
+            cairo_set_source_u32(cairo, config->label_color);
+            cairo_show_text(cairo, label_unselected_str);
         }
+
+        label_selection_incr(curr_label);
     }
 
     label_selection_free(curr_label);
@@ -238,6 +293,7 @@ void tile_mode_state_free(void *mode_state) {
     cairo_font_face_destroy(ms->label_font_face);
     label_selection_free(ms->label_selection);
     label_symbols_free(ms->label_symbols);
+    free(ms->cell_idx_map);
     free(ms);
 }
 

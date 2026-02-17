@@ -50,6 +50,10 @@ struct tile_mode_state {
     int sub_area_height;
     int sub_area_height_off;
 
+    // Maps label index -> linear cell index. NULL when every cell is valid
+    // (single-output mode or no dead zones).
+    int *cell_idx_map;
+
     label_selection_t *label_selection;
     label_symbols_t   *label_symbols;
 
