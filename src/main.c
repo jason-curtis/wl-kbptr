@@ -694,6 +694,8 @@ static void resolve_result_output(struct state *state) {
     int32_t        cx = state->result.x + state->result.w / 2;
     int32_t        cy = state->result.y + state->result.h / 2;
     struct output *output;
+
+    // First try: exact hit.
     wl_list_for_each (output, &state->outputs, link) {
         if (cx >= output->x && cx < output->x + output->width &&
             cy >= output->y && cy < output->y + output->height) {
@@ -704,11 +706,37 @@ static void resolve_result_output(struct state *state) {
         }
     }
 
-    // Fallback: use the first output.
-    output                 = wl_container_of(state->outputs.next, output, link);
-    state->current_output  = output;
-    state->result.x       -= output->x;
-    state->result.y       -= output->y;
+    // The result centre is in a dead zone (gap between monitors).  Find the
+    // nearest output and snap the centre to its closest edge.
+    struct output *best      = NULL;
+    int32_t        best_dist = INT32_MAX;
+    wl_list_for_each (output, &state->outputs, link) {
+        int32_t dx = cx < output->x                    ? output->x - cx
+                   : cx >= output->x + output->width   ? cx - (output->x + output->width - 1)
+                                                       : 0;
+        int32_t dy = cy < output->y                    ? output->y - cy
+                   : cy >= output->y + output->height  ? cy - (output->y + output->height - 1)
+                                                       : 0;
+        int32_t dist = dx + dy;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best      = output;
+        }
+    }
+
+    if (best == NULL) {
+        best = wl_container_of(state->outputs.next, best, link);
+    }
+
+    // Clamp the result rect so it falls within the chosen output.
+    int32_t snapped_cx = max(best->x, min(cx, best->x + best->width - 1));
+    int32_t snapped_cy = max(best->y, min(cy, best->y + best->height - 1));
+    state->result.x    = snapped_cx - state->result.w / 2;
+    state->result.y    = snapped_cy - state->result.h / 2;
+
+    state->current_output  = best;
+    state->result.x       -= best->x;
+    state->result.y       -= best->y;
 }
 
 static void print_usage() {

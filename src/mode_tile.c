@@ -18,9 +18,31 @@ void *tile_mode_enter(struct state *state, struct rect area) {
     ms->area                   = area;
 
     const int max_num_sub_areas = 26 * 26;
-    const int area_size         = ms->area.w * ms->area.h;
+
+    // In all-outputs mode, base cell size on the average logical monitor area
+    // rather than the full bounding box so cell density is the same as in
+    // single-output mode.  Each monitor ends up with roughly the same number
+    // of cells as it would have had on its own.
+    int32_t density_area;
+    if (state->config.general.all_outputs &&
+        !wl_list_empty(&state->overlay_surfaces)) {
+        int64_t total = 0;
+        int     n     = 0;
+        struct overlay_surface *ov;
+        wl_list_for_each (ov, &state->overlay_surfaces, link) {
+            if (ov->output != NULL) {
+                total += (int64_t)ov->output->width * ov->output->height;
+                n++;
+            }
+        }
+        density_area =
+            (n > 0) ? (int32_t)(total / n) : ms->area.w * ms->area.h;
+    } else {
+        density_area = ms->area.w * ms->area.h;
+    }
+
     const int sub_area_size =
-        max(area_size / max_num_sub_areas, MIN_SUB_AREA_SIZE);
+        max(density_area / max_num_sub_areas, MIN_SUB_AREA_SIZE);
 
     ms->sub_area_height = sqrt(sub_area_size / 2.);
     ms->sub_area_rows   = ms->area.h / ms->sub_area_height;
