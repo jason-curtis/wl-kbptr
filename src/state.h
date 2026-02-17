@@ -39,19 +39,33 @@
 
 struct mode_interface;
 
-struct tile_mode_state {
-    struct rect area;
+// One selectable region per monitor in all-outputs mode.
+struct tile_region {
+    struct rect area;       // position and size in global coordinates
+    int         rows;
+    int         cols;
+    int         cell_w;      // base cell width
+    int         cell_w_off;  // columns that get 1 extra px (remainder distribution)
+    int         cell_h;      // base cell height
+    int         cell_h_off;  // rows that get 1 extra px
+    int         label_offset; // index of first label in this region
+    int         num_labels;   // rows * cols
+};
 
+struct tile_mode_state {
+    // Region-based multi-output fields (set when all_outputs is true).
+    // NULL in single-output mode.
+    struct tile_region *regions;
+    int                 num_regions;
+
+    // Single-output fields (used when regions == NULL).
+    struct rect area;
     int sub_area_rows;
     int sub_area_width;
     int sub_area_width_off;
-
     int sub_area_columns;
     int sub_area_height;
     int sub_area_height_off;
-
-    // Maps label index -> linear cell index. NULL when every cell is valid
-    // (single-output mode or no dead zones).
     int *cell_idx_map;
 
     label_selection_t *label_selection;

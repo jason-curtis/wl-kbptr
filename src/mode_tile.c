@@ -16,112 +16,102 @@
 void *tile_mode_enter(struct state *state, struct rect area) {
     struct tile_mode_state *ms = malloc(sizeof(*ms));
     ms->area                   = area;
+    ms->regions                = NULL;
+    ms->num_regions            = 0;
+    ms->cell_idx_map           = NULL;
 
     const int max_num_sub_areas = 26 * 26;
-
-    // In all-outputs mode, base cell size on the average logical monitor area
-    // rather than the full bounding box so cell density is the same as in
-    // single-output mode.  Each monitor ends up with roughly the same number
-    // of cells as it would have had on its own.
-    int32_t density_area;
-    if (state->config.general.all_outputs &&
-        !wl_list_empty(&state->overlay_surfaces)) {
-        int64_t total = 0;
-        int     n     = 0;
-        struct overlay_surface *ov;
-        wl_list_for_each (ov, &state->overlay_surfaces, link) {
-            if (ov->output != NULL) {
-                total += (int64_t)ov->output->width * ov->output->height;
-                n++;
-            }
-        }
-        density_area =
-            (n > 0) ? (int32_t)(total / n) : ms->area.w * ms->area.h;
-    } else {
-        density_area = ms->area.w * ms->area.h;
-    }
-
-    const int sub_area_size =
-        max(density_area / max_num_sub_areas, MIN_SUB_AREA_SIZE);
-
-    ms->sub_area_height = sqrt(sub_area_size / 2.);
-    ms->sub_area_rows   = ms->area.h / ms->sub_area_height;
-    if (ms->sub_area_rows == 0) {
-        ms->sub_area_rows = 1;
-    }
-    ms->sub_area_height_off = ms->area.h % ms->sub_area_rows;
-    ms->sub_area_height     = ms->area.h / ms->sub_area_rows;
-
-    ms->sub_area_width   = sqrt(sub_area_size * 2);
-    ms->sub_area_columns = ms->area.w / ms->sub_area_width;
-    if (ms->sub_area_columns == 0) {
-        ms->sub_area_columns = 1;
-    }
-    ms->sub_area_width_off = ms->area.w % ms->sub_area_columns;
-    ms->sub_area_width     = ms->area.w / ms->sub_area_columns;
 
     ms->label_symbols =
         label_symbols_from_str(state->config.mode_tile.label_symbols);
     if (ms->label_symbols == NULL) {
         ms->label_selection = NULL;
-        ms->cell_idx_map    = NULL;
         state->running      = false;
         return ms;
     }
 
-    int total_cells  = ms->sub_area_rows * ms->sub_area_columns;
-    ms->cell_idx_map = NULL;
-
     if (state->config.general.all_outputs &&
         !wl_list_empty(&state->overlay_surfaces)) {
-        // Only assign labels to cells whose centre falls on a real output,
-        // skipping dead-zone gaps between monitors.
-        int *tmp       = malloc(total_cells * sizeof(int));
-        int  num_valid = 0;
+        // Region-based approach: one region per monitor, each with its own
+        // grid.  Labels are assigned proportionally by area and indexed
+        // continuously across all regions with no dead zones.
 
-        for (int ci = 0; ci < total_cells; ci++) {
-            int column = ci / ms->sub_area_rows;
-            int row    = ci % ms->sub_area_rows;
-
-            int x = column * ms->sub_area_width +
-                    min(column, ms->sub_area_width_off);
-            int w = ms->sub_area_width +
-                    (column < ms->sub_area_width_off ? 1 : 0);
-            int y =
-                row * ms->sub_area_height + min(row, ms->sub_area_height_off);
-            int h = ms->sub_area_height +
-                    (row < ms->sub_area_height_off ? 1 : 0);
-
-            int32_t cx = ms->area.x + x + w / 2;
-            int32_t cy = ms->area.y + y + h / 2;
-
-            bool           on_output = false;
-            struct output *out;
-            wl_list_for_each (out, &state->outputs, link) {
-                if (cx >= out->x && cx < out->x + out->width &&
-                    cy >= out->y && cy < out->y + out->height) {
-                    on_output = true;
-                    break;
-                }
-            }
-            if (on_output) {
-                tmp[num_valid++] = ci;
+        // Count monitors and compute average area for a consistent cell size.
+        int64_t total_area = 0;
+        int     n          = 0;
+        struct overlay_surface *ov;
+        wl_list_for_each (ov, &state->overlay_surfaces, link) {
+            if (ov->output != NULL) {
+                total_area += (int64_t)ov->output->width * ov->output->height;
+                n++;
             }
         }
-
-        if (num_valid < total_cells) {
-            ms->cell_idx_map = malloc(num_valid * sizeof(int));
-            memcpy(ms->cell_idx_map, tmp, num_valid * sizeof(int));
-            ms->label_selection =
-                label_selection_new(ms->label_symbols, num_valid);
-        } else {
-            ms->label_selection =
-                label_selection_new(ms->label_symbols, total_cells);
+        if (n == 0) {
+            ms->label_selection = NULL;
+            state->running      = false;
+            return ms;
         }
-        free(tmp);
-    } else {
+
+        int32_t avg_area = (int32_t)(total_area / n);
+        int sub_area_size =
+            max(avg_area / max_num_sub_areas, MIN_SUB_AREA_SIZE);
+        int cell_h = max((int)sqrt(sub_area_size / 2.), 1);
+        int cell_w = max((int)sqrt(sub_area_size * 2.), 1);
+
+        // Allocate region array (one entry per output with a known position).
+        ms->regions     = malloc(n * sizeof(struct tile_region));
+        ms->num_regions = 0;
+        int label_offset = 0;
+
+        wl_list_for_each (ov, &state->overlay_surfaces, link) {
+            if (ov->output == NULL) continue;
+            struct output      *o = ov->output;
+            struct tile_region *r = &ms->regions[ms->num_regions++];
+
+            r->area.x = o->x;
+            r->area.y = o->y;
+            r->area.w = o->width;
+            r->area.h = o->height;
+
+            r->rows = max(o->height / cell_h, 1);
+            r->cols = max(o->width / cell_w, 1);
+
+            r->cell_h     = o->height / r->rows;
+            r->cell_h_off = o->height % r->rows;
+            r->cell_w     = o->width / r->cols;
+            r->cell_w_off = o->width % r->cols;
+
+            r->label_offset = label_offset;
+            r->num_labels   = r->rows * r->cols;
+            label_offset += r->num_labels;
+        }
+
         ms->label_selection =
-            label_selection_new(ms->label_symbols, total_cells);
+            label_selection_new(ms->label_symbols, label_offset);
+    } else {
+        // Single-output path: flat grid over the whole area.
+        int32_t density_area = ms->area.w * ms->area.h;
+        int sub_area_size =
+            max(density_area / max_num_sub_areas, MIN_SUB_AREA_SIZE);
+
+        ms->sub_area_height = sqrt(sub_area_size / 2.);
+        ms->sub_area_rows   = ms->area.h / ms->sub_area_height;
+        if (ms->sub_area_rows == 0) {
+            ms->sub_area_rows = 1;
+        }
+        ms->sub_area_height_off = ms->area.h % ms->sub_area_rows;
+        ms->sub_area_height     = ms->area.h / ms->sub_area_rows;
+
+        ms->sub_area_width   = sqrt(sub_area_size * 2);
+        ms->sub_area_columns = ms->area.w / ms->sub_area_width;
+        if (ms->sub_area_columns == 0) {
+            ms->sub_area_columns = 1;
+        }
+        ms->sub_area_width_off = ms->area.w % ms->sub_area_columns;
+        ms->sub_area_width     = ms->area.w / ms->sub_area_columns;
+
+        int total_cells     = ms->sub_area_rows * ms->sub_area_columns;
+        ms->label_selection = label_selection_new(ms->label_symbols, total_cells);
     }
 
     ms->label_font_face = cairo_toy_font_face_create(
@@ -185,11 +175,40 @@ static bool tile_mode_key(
 
         int label_idx = label_selection_to_idx(ms->label_selection);
         if (label_idx >= 0) {
-            int cell_idx =
-                ms->cell_idx_map ? ms->cell_idx_map[label_idx] : label_idx;
-            enter_next_mode(
-                state, idx_to_rect(ms, cell_idx, ms->area.x, ms->area.y)
-            );
+            if (ms->regions != NULL) {
+                // Find which region this label belongs to, then compute the
+                // cell rect within that region.
+                for (int ri = 0; ri < ms->num_regions; ri++) {
+                    struct tile_region *r = &ms->regions[ri];
+                    if (label_idx < r->label_offset ||
+                        label_idx >= r->label_offset + r->num_labels) {
+                        continue;
+                    }
+                    int local = label_idx - r->label_offset;
+                    int col   = local / r->rows;
+                    int row   = local % r->rows;
+                    int x = col * r->cell_w + min(col, r->cell_w_off);
+                    int w = r->cell_w + (col < r->cell_w_off ? 1 : 0);
+                    int y = row * r->cell_h + min(row, r->cell_h_off);
+                    int h = r->cell_h + (row < r->cell_h_off ? 1 : 0);
+                    enter_next_mode(
+                        state,
+                        (struct rect){
+                            .x = r->area.x + x,
+                            .y = r->area.y + y,
+                            .w = w,
+                            .h = h,
+                        }
+                    );
+                    break;
+                }
+            } else {
+                int cell_idx =
+                    ms->cell_idx_map ? ms->cell_idx_map[label_idx] : label_idx;
+                enter_next_mode(
+                    state, idx_to_rect(ms, cell_idx, ms->area.x, ms->area.y)
+                );
+            }
         }
         return true;
     }
@@ -197,95 +216,148 @@ static bool tile_mode_key(
     return false;
 }
 
+// Render one selectable cell at position (x, y) with size (w, h) in the
+// current cairo coordinate space.  curr_label is the label for this cell;
+// ms->label_selection holds the user's current input.
+static void render_cell(
+    struct mode_tile_config *config, cairo_t *cairo,
+    label_selection_t *curr_label, label_selection_t *selection,
+    int x, int y, int w, int h,
+    char *label_selected_str, char *label_unselected_str
+) {
+    const bool selectable = label_selection_is_included(curr_label, selection);
+    cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+    if (!selectable) {
+        return;
+    }
+
+    cairo_set_source_u32(cairo, config->selectable_bg_color);
+    cairo_rectangle(cairo, x, y, w, h);
+    cairo_fill(cairo);
+
+    cairo_set_source_u32(cairo, config->selectable_border_color);
+    cairo_rectangle(cairo, x + .5, y + .5, w - 1, h - 1);
+    cairo_set_line_width(cairo, 1);
+    cairo_stroke(cairo);
+
+    cairo_text_extents_t te_all;
+    label_selection_str(curr_label, label_selected_str);
+    cairo_text_extents(cairo, label_selected_str, &te_all);
+
+    label_selection_str_split(
+        curr_label, label_selected_str, label_unselected_str, selection->next
+    );
+
+    cairo_text_extents_t te_selected, te_unselected;
+    cairo_text_extents(cairo, label_selected_str, &te_selected);
+    cairo_text_extents(cairo, label_unselected_str, &te_unselected);
+
+    cairo_move_to(
+        cairo,
+        x + (w - te_selected.x_advance - te_unselected.x_advance) / 2,
+        y + (int)((h + te_all.height) / 2)
+    );
+    cairo_set_source_u32(cairo, config->label_select_color);
+    cairo_show_text(cairo, label_selected_str);
+    cairo_set_source_u32(cairo, config->label_color);
+    cairo_show_text(cairo, label_unselected_str);
+}
+
 void tile_mode_render(struct state *state, void *mode_state, cairo_t *cairo) {
     struct mode_tile_config *config = &state->config.mode_tile;
     struct tile_mode_state  *ms     = mode_state;
 
+    // Font size: for regions use the first region's cell height, otherwise
+    // the single-output cell height.
+    int ref_cell_h = (ms->regions != NULL && ms->num_regions > 0)
+                         ? ms->regions[0].cell_h
+                         : ms->sub_area_height;
     cairo_set_font_face(cairo, ms->label_font_face);
     cairo_set_font_size(
-        cairo, compute_relative_font_size(
-                   &config->label_font_size, ms->sub_area_height
-               )
+        cairo,
+        compute_relative_font_size(&config->label_font_size, ref_cell_h)
     );
 
+    // Paint background over the whole surface.
     cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
     cairo_set_source_u32(cairo, config->unselectable_bg_color);
     cairo_paint(cairo);
 
-    cairo_translate(cairo, ms->area.x, ms->area.y);
-
-    cairo_set_source_u32(cairo, config->unselectable_bg_color);
-    cairo_rectangle(cairo, .5, .5, ms->area.w - 1, ms->area.h - 1);
-    cairo_set_line_width(cairo, 1);
-    cairo_stroke(cairo);
-
     int num_labels = ms->label_selection->num_labels;
     label_selection_t *curr_label =
         label_selection_new(ms->label_symbols, num_labels);
-    label_selection_set_from_idx(curr_label, 0);
 
     int  label_str_max_len = label_selection_str_max_len(curr_label) + 1;
     char label_selected_str[label_str_max_len];
     char label_unselected_str[label_str_max_len];
 
-    for (int li = 0; li < num_labels; li++) {
-        int ci     = ms->cell_idx_map ? ms->cell_idx_map[li] : li;
-        int column = ci / ms->sub_area_rows;
-        int row    = ci % ms->sub_area_rows;
+    if (ms->regions != NULL) {
+        // Region-based rendering: iterate over each monitor's region.
+        for (int ri = 0; ri < ms->num_regions; ri++) {
+            struct tile_region *r = &ms->regions[ri];
 
-        const int x =
-            column * ms->sub_area_width + min(column, ms->sub_area_width_off);
-        const int w =
-            ms->sub_area_width + (column < ms->sub_area_width_off ? 1 : 0);
-        const int y =
-            row * ms->sub_area_height + min(row, ms->sub_area_height_off);
-        const int h =
-            ms->sub_area_height + (row < ms->sub_area_height_off ? 1 : 0);
-
-        const bool selectable =
-            label_selection_is_included(curr_label, ms->label_selection);
-
-        cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-        if (selectable) {
-            cairo_set_source_u32(cairo, config->selectable_bg_color);
-            cairo_rectangle(cairo, x, y, w, h);
-            cairo_fill(cairo);
-
-            cairo_set_source_u32(cairo, config->selectable_border_color);
-            cairo_rectangle(cairo, x + .5, y + .5, w - 1, h - 1);
+            // Draw region outline.
+            cairo_set_source_u32(cairo, config->unselectable_bg_color);
+            cairo_rectangle(
+                cairo, r->area.x + .5, r->area.y + .5,
+                r->area.w - 1, r->area.h - 1
+            );
             cairo_set_line_width(cairo, 1);
             cairo_stroke(cairo);
 
-            cairo_text_extents_t te_all;
-            label_selection_str(curr_label, label_selected_str);
-            cairo_text_extents(cairo, label_selected_str, &te_all);
+            label_selection_set_from_idx(curr_label, r->label_offset);
 
-            label_selection_str_split(
-                curr_label, label_selected_str, label_unselected_str,
-                ms->label_selection->next
+            for (int li = 0; li < r->num_labels; li++) {
+                int col = li / r->rows;
+                int row = li % r->rows;
+                int x = r->area.x + col * r->cell_w + min(col, r->cell_w_off);
+                int w = r->cell_w + (col < r->cell_w_off ? 1 : 0);
+                int y = r->area.y + row * r->cell_h + min(row, r->cell_h_off);
+                int h = r->cell_h + (row < r->cell_h_off ? 1 : 0);
+
+                render_cell(
+                    config, cairo, curr_label, ms->label_selection,
+                    x, y, w, h, label_selected_str, label_unselected_str
+                );
+                label_selection_incr(curr_label);
+            }
+        }
+    } else {
+        // Single-output flat grid.
+        cairo_translate(cairo, ms->area.x, ms->area.y);
+
+        cairo_set_source_u32(cairo, config->unselectable_bg_color);
+        cairo_rectangle(cairo, .5, .5, ms->area.w - 1, ms->area.h - 1);
+        cairo_set_line_width(cairo, 1);
+        cairo_stroke(cairo);
+
+        label_selection_set_from_idx(curr_label, 0);
+
+        for (int li = 0; li < num_labels; li++) {
+            int ci     = ms->cell_idx_map ? ms->cell_idx_map[li] : li;
+            int column = ci / ms->sub_area_rows;
+            int row    = ci % ms->sub_area_rows;
+
+            int x = column * ms->sub_area_width +
+                    min(column, ms->sub_area_width_off);
+            int w = ms->sub_area_width +
+                    (column < ms->sub_area_width_off ? 1 : 0);
+            int y =
+                row * ms->sub_area_height + min(row, ms->sub_area_height_off);
+            int h = ms->sub_area_height +
+                    (row < ms->sub_area_height_off ? 1 : 0);
+
+            render_cell(
+                config, cairo, curr_label, ms->label_selection,
+                x, y, w, h, label_selected_str, label_unselected_str
             );
-
-            cairo_text_extents_t te_selected, te_unselected;
-            cairo_text_extents(cairo, label_selected_str, &te_selected);
-            cairo_text_extents(cairo, label_unselected_str, &te_unselected);
-
-            // Centers the label.
-            cairo_move_to(
-                cairo,
-                x + (w - te_selected.x_advance - te_unselected.x_advance) / 2,
-                y + (int)((h + te_all.height) / 2)
-            );
-            cairo_set_source_u32(cairo, config->label_select_color);
-            cairo_show_text(cairo, label_selected_str);
-            cairo_set_source_u32(cairo, config->label_color);
-            cairo_show_text(cairo, label_unselected_str);
+            label_selection_incr(curr_label);
         }
 
-        label_selection_incr(curr_label);
+        cairo_translate(cairo, -ms->area.x, -ms->area.y);
     }
 
     label_selection_free(curr_label);
-    cairo_translate(cairo, -ms->area.x, -ms->area.y);
 }
 
 void tile_mode_state_free(void *mode_state) {
@@ -293,6 +365,7 @@ void tile_mode_state_free(void *mode_state) {
     cairo_font_face_destroy(ms->label_font_face);
     label_selection_free(ms->label_selection);
     label_symbols_free(ms->label_symbols);
+    free(ms->regions);
     free(ms->cell_idx_map);
     free(ms);
 }
