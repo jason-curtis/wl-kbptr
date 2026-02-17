@@ -248,7 +248,7 @@ Cell size is computed from the **average logical monitor area** rather than the 
 
 ### Dead zones
 
-If your monitors are not perfectly aligned (e.g. one is above or below the others), there may be empty regions in the bounding box not covered by any output. Cells whose centre falls in such a gap snap to the nearest monitor boundary rather than moving the cursor off-screen.
+If your monitors are not perfectly aligned (e.g. one is above or below the others), there may be empty regions in the bounding box not covered by any output. Cells whose centre falls in such a gap are skipped entirely — no label is assigned to them. This keeps the full label budget for reachable cells, producing more 2-letter codes on setups with unaligned monitors. If a result coordinate somehow falls in a gap, it snaps to the nearest monitor boundary.
 
 ## Configuration
 
