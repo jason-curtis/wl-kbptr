@@ -66,7 +66,6 @@ struct tile_mode_state {
     int sub_area_columns;
     int sub_area_height;
     int sub_area_height_off;
-    int *cell_idx_map;
 
     label_selection_t *label_selection;
     label_symbols_t   *label_symbols;
@@ -118,12 +117,12 @@ struct state;
 struct overlay_surface {
     struct wl_list link; // type: struct overlay_surface
 
-    struct wl_surface            *wl_surface;
-    struct wl_callback           *wl_surface_callback;
-    struct zwlr_layer_surface_v1 *wl_layer_surface;
-    struct wp_viewport           *wp_viewport;
+    struct wl_surface             *wl_surface;
+    struct wl_callback            *wl_surface_callback;
+    struct zwlr_layer_surface_v1  *wl_layer_surface;
+    struct wp_viewport            *wp_viewport;
     struct wp_fractional_scale_v1 *fractional_scale;
-    struct surface_buffer_pool    surface_buffer_pool;
+    struct surface_buffer_pool     surface_buffer_pool;
 
     uint32_t width;
     uint32_t height;

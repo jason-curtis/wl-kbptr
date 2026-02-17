@@ -14,11 +14,8 @@
 #define MIN_SUB_AREA_SIZE (25 * 50)
 
 void *tile_mode_enter(struct state *state, struct rect area) {
-    struct tile_mode_state *ms = malloc(sizeof(*ms));
+    struct tile_mode_state *ms = calloc(1, sizeof(*ms));
     ms->area                   = area;
-    ms->regions                = NULL;
-    ms->num_regions            = 0;
-    ms->cell_idx_map           = NULL;
 
     const int max_num_sub_areas = 26 * 26;
 
@@ -203,10 +200,8 @@ static bool tile_mode_key(
                     break;
                 }
             } else {
-                int cell_idx =
-                    ms->cell_idx_map ? ms->cell_idx_map[label_idx] : label_idx;
                 enter_next_mode(
-                    state, idx_to_rect(ms, cell_idx, ms->area.x, ms->area.y)
+                    state, idx_to_rect(ms, label_idx, ms->area.x, ms->area.y)
                 );
             }
         }
@@ -216,9 +211,8 @@ static bool tile_mode_key(
     return false;
 }
 
-// Render one selectable cell at position (x, y) with size (w, h) in the
-// current cairo coordinate space.  curr_label is the label for this cell;
-// ms->label_selection holds the user's current input.
+// Render one selectable cell at position (x, y) with size (w, h).
+// curr_label is the label for this cell; selection is the current user input.
 static void render_cell(
     struct mode_tile_config *config, cairo_t *cairo,
     label_selection_t *curr_label, label_selection_t *selection,
@@ -334,9 +328,8 @@ void tile_mode_render(struct state *state, void *mode_state, cairo_t *cairo) {
         label_selection_set_from_idx(curr_label, 0);
 
         for (int li = 0; li < num_labels; li++) {
-            int ci     = ms->cell_idx_map ? ms->cell_idx_map[li] : li;
-            int column = ci / ms->sub_area_rows;
-            int row    = ci % ms->sub_area_rows;
+            int column = li / ms->sub_area_rows;
+            int row    = li % ms->sub_area_rows;
 
             int x = column * ms->sub_area_width +
                     min(column, ms->sub_area_width_off);
@@ -366,7 +359,6 @@ void tile_mode_state_free(void *mode_state) {
     label_selection_free(ms->label_selection);
     label_symbols_free(ms->label_symbols);
     free(ms->regions);
-    free(ms->cell_idx_map);
     free(ms);
 }
 

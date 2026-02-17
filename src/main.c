@@ -593,15 +593,15 @@ static void handle_layer_surface_configure(
     overlay->height = height;
     zwlr_layer_surface_v1_ack_configure(layer_surface, serial);
 
+    bool was_configured = overlay->configured;
+    overlay->configured = true;
+
     if (overlay->output != NULL) {
-        overlay->configured = true;
         enter_first_mode(state);
-    } else if (!overlay->configured) {
+    } else if (!was_configured) {
         // Output not yet known; send a transparent frame to get surface.enter.
         send_transparent_frame_to_overlay(overlay);
     }
-
-    overlay->configured = true;
 }
 
 static void handle_layer_surface_closed(
@@ -706,8 +706,8 @@ static void resolve_result_output(struct state *state) {
         }
     }
 
-    // The result centre is in a dead zone (gap between monitors).  Find the
-    // nearest output and snap the centre to its closest edge.
+    // Result centre is not on any output (e.g. a mode that doesn't yet handle
+    // per-region placement).  Find the nearest output and snap to its edge.
     struct output *best      = NULL;
     int32_t        best_dist = INT32_MAX;
     wl_list_for_each (output, &state->outputs, link) {
@@ -877,7 +877,7 @@ int main(int argc, char **argv) {
     };
 
     int    num_cli_configs      = 0;
-    char **cli_configs          = malloc(10 * sizeof(char *));
+    char **cli_configs          = malloc(10 * sizeof(char*));
     int    cli_configs_len      = 10;
     int    option_char          = 0;
     int    option_index         = 0;
@@ -913,7 +913,7 @@ int main(int argc, char **argv) {
             if (num_cli_configs >= cli_configs_len) {
                 cli_configs_len += 10;
                 cli_configs =
-                    realloc(cli_configs, cli_configs_len * sizeof(char *));
+                    realloc(cli_configs, cli_configs_len * sizeof(char*));
             }
             cli_configs[num_cli_configs++] = optarg;
             break;

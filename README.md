@@ -239,16 +239,12 @@ all_outputs=true
 
 - One overlay surface is created per output, each covering its respective monitor.
 - The first surface gets exclusive keyboard focus; the compositor routes all key events there regardless of which monitor the cursor is on.
-- All surfaces share a single label namespace spanning the global bounding box of all outputs.
+- Each monitor is treated as an independent **region** with its own rows×cols grid; labels are indexed continuously across all regions.
 - After you type a label, the cursor moves to the correct output automatically.
 
 ### Cell density
 
-Cell size is computed from the **average logical monitor area** rather than the full bounding box. This keeps cell density consistent with single-output mode — each monitor gets roughly the same number of cells as it would on its own. With multiple monitors, most labels will require more keystrokes (3 with 3 monitors) since the total number of cells scales with the number of outputs.
-
-### Dead zones
-
-If your monitors are not perfectly aligned (e.g. one is above or below the others), there may be empty regions in the bounding box not covered by any output. Cells whose centre falls in such a gap are skipped entirely — no label is assigned to them. This keeps the full label budget for reachable cells, producing more 2-letter codes on setups with unaligned monitors. If a result coordinate somehow falls in a gap, it snaps to the nearest monitor boundary.
+Cell size is computed from the **average logical monitor area**, keeping density consistent with single-output mode — each monitor gets roughly the same number of cells as it would on its own. With multiple monitors the total label count scales with the number of outputs, so labels may require more keystrokes (e.g. 3 characters with 3 monitors).
 
 ## Configuration
 
