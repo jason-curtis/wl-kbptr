@@ -91,6 +91,32 @@ struct output {
     enum wl_output_transform transform;
 };
 
+struct state;
+
+/**
+ * Per-output overlay surface. In single-output mode there is exactly one of
+ * these; in all-outputs mode there is one per connected output.
+ */
+struct overlay_surface {
+    struct wl_list link; // type: struct overlay_surface
+
+    struct wl_surface            *wl_surface;
+    struct wl_callback           *wl_surface_callback;
+    struct zwlr_layer_surface_v1 *wl_layer_surface;
+    struct wp_viewport           *wp_viewport;
+    struct wp_fractional_scale_v1 *fractional_scale;
+    struct surface_buffer_pool    surface_buffer_pool;
+
+    uint32_t width;
+    uint32_t height;
+    uint32_t fractional_scale_val; // preferred scale * 120
+
+    bool configured;
+
+    struct output *output; // NULL until surface.enter fires (single-output, no -O)
+    struct state  *state;
+};
+
 struct seat {
     struct wl_list      link; // type: struct seat
     struct wl_seat     *wl_seat;
@@ -110,23 +136,16 @@ struct state {
     struct zwlr_layer_shell_v1             *wl_layer_shell;
     struct zwlr_virtual_pointer_manager_v1 *wl_virtual_pointer_mgr;
     struct wp_viewporter                   *wp_viewporter;
-    struct wp_viewport                     *wp_viewport;
     struct wp_fractional_scale_manager_v1  *fractional_scale_mgr;
-    struct surface_buffer_pool              surface_buffer_pool;
-    struct wl_surface                      *wl_surface;
-    struct wl_callback                     *wl_surface_callback;
-    struct zwlr_layer_surface_v1           *wl_layer_surface;
-    bool                                    surface_configured;
 #if OPENCV_ENABLED
     struct zwlr_screencopy_manager_v1 *wl_screencopy_manager;
 #endif
     struct zxdg_output_manager_v1 *xdg_output_manager;
     struct wl_list                 outputs;
     struct wl_list                 seats;
-    struct output                 *current_output;
-    uint32_t                       surface_height;
-    uint32_t                       surface_width;
-    uint32_t                       fractional_scale; // scale / 120
+    struct wl_list                 overlay_surfaces; // type: struct overlay_surface
+    struct output                 *current_output;   // set from -O/-r or surface.enter (single-output);
+                                                     // set from result coords (all-outputs) before move_pointer
     bool                           running;
     struct rect                    initial_area;
     char                           home_row_buffer[HOME_ROW_BUFFER_LEN];
