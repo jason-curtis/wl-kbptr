@@ -239,8 +239,17 @@ all_outputs=true
 
 - One overlay surface is created per output, each covering its respective monitor.
 - The first surface gets exclusive keyboard focus; the compositor routes all key events there regardless of which monitor the cursor is on.
-- Each monitor is treated as an independent **region** with its own rows×cols grid; labels are indexed continuously across all regions.
+- Each monitor is assigned its **exclusive pixels** — its full logical bounds minus any area that overlaps with a previously processed monitor. Labels are indexed continuously across all resulting regions.
 - After you type a label, the cursor moves to the correct output automatically.
+
+This exclusive-region approach handles arbitrary overlap topologies correctly:
+
+| Layout | Behaviour |
+| ------ | --------- |
+| Side-by-side / stacked (no overlap) | One region per monitor, as expected. |
+| Corner overlap | Each monitor's exclusive area is split into up to 4 rectangles; the shared corner belongs to whichever monitor is listed first by the compositor. |
+| Landscape + portrait overlap | The portrait monitor's cells cover only the rows that extend below the landscape monitor; the landscape monitor's cells cover the columns outside the portrait monitor's width. |
+| Full mirror (same logical position) | The second monitor has no exclusive area and receives no labels. Its overlay surface shows only the background tint. |
 
 ### Cell density
 

@@ -11,7 +11,43 @@
 #include <string.h>
 #include <xkbcommon/xkbcommon.h>
 
-#define MIN_SUB_AREA_SIZE (25 * 50)
+#define MIN_SUB_AREA_SIZE   (25 * 50)
+// Upper bound on pending sub-rectangles when computing one output's exclusive
+// area.  In any real monitor layout this will never be reached.
+#define MAX_PENDING_RECTS 64
+
+// Returns the intersection of a and b.  w or h will be 0 if they are disjoint.
+static struct rect rect_intersect(struct rect a, struct rect b) {
+    int32_t x1 = max(a.x, b.x);
+    int32_t y1 = max(a.y, b.y);
+    int32_t x2 = min(a.x + a.w, b.x + b.w);
+    int32_t y2 = min(a.y + a.h, b.y + b.h);
+    int32_t w  = x2 - x1;
+    int32_t h  = y2 - y1;
+    return (struct rect){.x = x1, .y = y1, .w = w > 0 ? w : 0, .h = h > 0 ? h : 0};
+}
+
+// Subtract rectangle b from rectangle a using a cross decomposition:
+// full-height left/right strips, then top/bottom middle strips.
+// Stores up to 4 non-empty results in out[] and returns the count.
+// If a and b do not intersect, returns 1 with out[0] = a.
+static int rect_subtract(struct rect a, struct rect b, struct rect out[4]) {
+    struct rect i = rect_intersect(a, b);
+    if (i.w <= 0 || i.h <= 0) {
+        out[0] = a;
+        return 1;
+    }
+    int n = 0;
+    if (i.x > a.x)
+        out[n++] = (struct rect){.x = a.x,       .y = a.y, .w = i.x - a.x,               .h = a.h};
+    if (i.x + i.w < a.x + a.w)
+        out[n++] = (struct rect){.x = i.x + i.w, .y = a.y, .w = (a.x + a.w) - (i.x + i.w), .h = a.h};
+    if (i.y > a.y)
+        out[n++] = (struct rect){.x = i.x,        .y = a.y,       .w = i.w, .h = i.y - a.y};
+    if (i.y + i.h < a.y + a.h)
+        out[n++] = (struct rect){.x = i.x,        .y = i.y + i.h, .w = i.w, .h = (a.y + a.h) - (i.y + i.h)};
+    return n;
+}
 
 void *tile_mode_enter(struct state *state, struct rect area) {
     struct tile_mode_state *ms = calloc(1, sizeof(*ms));
@@ -29,11 +65,15 @@ void *tile_mode_enter(struct state *state, struct rect area) {
 
     if (state->config.general.all_outputs &&
         !wl_list_empty(&state->overlay_surfaces)) {
-        // Region-based approach: one region per monitor, each with its own
-        // grid.  Labels are assigned proportionally by area and indexed
-        // continuously across all regions with no dead zones.
+        // Exclusive-region approach: each output is assigned only the pixels
+        // that belong exclusively to it — its full bounds minus any area
+        // already claimed by a previously processed output.  This correctly
+        // handles any overlap topology: side-by-side, corner overlap,
+        // landscape+portrait, and full mirror (which yields no exclusive area
+        // for the second output and therefore no labels there).
 
-        // Count monitors and compute average area for a consistent cell size.
+        // Count monitors and compute average monitor area for a consistent
+        // cell size across all regions.
         int64_t total_area = 0;
         int     n          = 0;
         struct overlay_surface *ov;
@@ -49,42 +89,72 @@ void *tile_mode_enter(struct state *state, struct rect area) {
             return ms;
         }
 
-        int32_t avg_area = (int32_t)(total_area / n);
-        int sub_area_size =
-            max(avg_area / max_num_sub_areas, MIN_SUB_AREA_SIZE);
-        int cell_h = max((int)sqrt(sub_area_size / 2.), 1);
-        int cell_w = max((int)sqrt(sub_area_size * 2.), 1);
+        int32_t avg_area      = (int32_t)(total_area / n);
+        int     sub_area_size = max(avg_area / max_num_sub_areas, MIN_SUB_AREA_SIZE);
+        int     cell_h        = max((int)sqrt(sub_area_size / 2.), 1);
+        int     cell_w        = max((int)sqrt(sub_area_size * 2.), 1);
 
-        // Allocate region array (one entry per output with a known position).
-        ms->regions     = malloc(n * sizeof(struct tile_region));
+        // Each output can produce at most MAX_PENDING_RECTS exclusive
+        // sub-rectangles, so allocate that many slots per output.
+        ms->regions     = malloc((size_t)n * MAX_PENDING_RECTS * sizeof(struct tile_region));
         ms->num_regions = 0;
         int label_offset = 0;
 
+        // Full bounds of already-processed outputs, for subtraction.
+        struct rect *processed   = malloc((size_t)n * sizeof(struct rect));
+        int          n_processed = 0;
+
         wl_list_for_each (ov, &state->overlay_surfaces, link) {
             if (ov->output == NULL) continue;
-            struct output      *o = ov->output;
-            struct tile_region *r = &ms->regions[ms->num_regions++];
+            struct output *o = ov->output;
 
-            r->area.x = o->x;
-            r->area.y = o->y;
-            r->area.w = o->width;
-            r->area.h = o->height;
+            // Ping-pong buffers: subtract each prior output's bounds from the
+            // current pending set to obtain this output's exclusive rectangles.
+            struct rect ping[MAX_PENDING_RECTS], pong[MAX_PENDING_RECTS];
+            struct rect *cur = ping, *nxt = pong;
+            int          n_cur = 1;
+            cur[0] = (struct rect){.x = o->x, .y = o->y, .w = o->width, .h = o->height};
 
-            r->rows = max(o->height / cell_h, 1);
-            r->cols = max(o->width / cell_w, 1);
+            for (int pi = 0; pi < n_processed && n_cur > 0; pi++) {
+                int n_nxt = 0;
+                for (int ri = 0; ri < n_cur; ri++) {
+                    struct rect out4[4];
+                    int         cnt = rect_subtract(cur[ri], processed[pi], out4);
+                    for (int k = 0; k < cnt; k++) {
+                        if (n_nxt < MAX_PENDING_RECTS)
+                            nxt[n_nxt++] = out4[k];
+                    }
+                }
+                struct rect *tmp = cur; cur = nxt; nxt = tmp;
+                n_cur = n_nxt;
+            }
 
-            r->cell_h     = o->height / r->rows;
-            r->cell_h_off = o->height % r->rows;
-            r->cell_w     = o->width / r->cols;
-            r->cell_w_off = o->width % r->cols;
+            // Create one tile region per exclusive sub-rectangle.
+            for (int ri = 0; ri < n_cur; ri++) {
+                struct rect r_area = cur[ri];
+                if (r_area.w <= 0 || r_area.h <= 0 ||
+                    ms->num_regions >= n * MAX_PENDING_RECTS) {
+                    continue;
+                }
+                struct tile_region *r = &ms->regions[ms->num_regions++];
+                r->area               = r_area;
+                r->rows               = max(r_area.h / cell_h, 1);
+                r->cols               = max(r_area.w / cell_w, 1);
+                r->cell_h             = r_area.h / r->rows;
+                r->cell_h_off         = r_area.h % r->rows;
+                r->cell_w             = r_area.w / r->cols;
+                r->cell_w_off         = r_area.w % r->cols;
+                r->label_offset       = label_offset;
+                r->num_labels         = r->rows * r->cols;
+                label_offset         += r->num_labels;
+            }
 
-            r->label_offset = label_offset;
-            r->num_labels   = r->rows * r->cols;
-            label_offset += r->num_labels;
+            processed[n_processed++] =
+                (struct rect){.x = o->x, .y = o->y, .w = o->width, .h = o->height};
         }
 
-        ms->label_selection =
-            label_selection_new(ms->label_symbols, label_offset);
+        free(processed);
+        ms->label_selection = label_selection_new(ms->label_symbols, label_offset);
     } else {
         // Single-output path: flat grid over the whole area.
         int32_t density_area = ms->area.w * ms->area.h;
