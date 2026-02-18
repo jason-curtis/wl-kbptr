@@ -247,8 +247,8 @@ This exclusive-region approach handles arbitrary overlap topologies correctly:
 | Layout | Behaviour |
 | ------ | --------- |
 | Side-by-side / stacked (no overlap) | One region per monitor, as expected. |
-| Corner overlap | Each monitor's exclusive area is split into up to 4 rectangles; the shared corner belongs to whichever monitor is listed first by the compositor. |
-| Landscape + portrait overlap | The portrait monitor's cells cover only the rows that extend below the landscape monitor; the landscape monitor's cells cover the columns outside the portrait monitor's width. |
+| Corner overlap | The first monitor keeps its full area; the second monitor's exclusive area is 2 strips (the non-overlapping edges). The shared corner belongs to the first monitor. |
+| Landscape + portrait overlap | The first-listed monitor keeps its full area. If landscape is first, the portrait monitor covers only the strip extending beyond the landscape area. If portrait is first, landscape gets left/right columns beside the portrait. |
 | Full mirror (same logical position) | The second monitor has no exclusive area and receives no labels. Its overlay surface shows only the background tint. |
 
 ### Cell density
