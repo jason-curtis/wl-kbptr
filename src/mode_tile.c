@@ -11,7 +11,7 @@
 #include <string.h>
 #include <xkbcommon/xkbcommon.h>
 
-#define MIN_SUB_AREA_SIZE   (25 * 50)
+#define MIN_SUB_AREA_SIZE (25 * 50)
 // Upper bound on pending sub-rectangles when computing one output's exclusive
 // area.  In any real monitor layout this will never be reached.
 #define MAX_PENDING_RECTS 64
@@ -22,9 +22,11 @@ static struct rect rect_intersect(struct rect a, struct rect b) {
     int32_t y1 = max(a.y, b.y);
     int32_t x2 = min(a.x + a.w, b.x + b.w);
     int32_t y2 = min(a.y + a.h, b.y + b.h);
-    int32_t w  = x2 - x1;
-    int32_t h  = y2 - y1;
-    return (struct rect){.x = x1, .y = y1, .w = w > 0 ? w : 0, .h = h > 0 ? h : 0};
+    return (struct rect){
+        .x = x1, .y = y1,
+        .w = x2 > x1 ? x2 - x1 : 0,
+        .h = y2 > y1 ? y2 - y1 : 0,
+    };
 }
 
 // Subtract rectangle b from rectangle a using a cross decomposition:
@@ -39,13 +41,13 @@ static int rect_subtract(struct rect a, struct rect b, struct rect out[4]) {
     }
     int n = 0;
     if (i.x > a.x)
-        out[n++] = (struct rect){.x = a.x,       .y = a.y, .w = i.x - a.x,               .h = a.h};
+        out[n++] = (struct rect){.x = a.x, .y = a.y, .w = i.x - a.x, .h = a.h};
     if (i.x + i.w < a.x + a.w)
         out[n++] = (struct rect){.x = i.x + i.w, .y = a.y, .w = (a.x + a.w) - (i.x + i.w), .h = a.h};
     if (i.y > a.y)
-        out[n++] = (struct rect){.x = i.x,        .y = a.y,       .w = i.w, .h = i.y - a.y};
+        out[n++] = (struct rect){.x = i.x, .y = a.y, .w = i.w, .h = i.y - a.y};
     if (i.y + i.h < a.y + a.h)
-        out[n++] = (struct rect){.x = i.x,        .y = i.y + i.h, .w = i.w, .h = (a.y + a.h) - (i.y + i.h)};
+        out[n++] = (struct rect){.x = i.x, .y = i.y + i.h, .w = i.w, .h = (a.y + a.h) - (i.y + i.h)};
     return n;
 }
 

@@ -39,7 +39,9 @@
 
 struct mode_interface;
 
-// One selectable region per monitor in all-outputs mode.
+// One exclusive sub-rectangle of an output in all-outputs mode.
+// A single output may produce multiple tile_region structs if its bounds
+// partially overlap with a previously processed output.
 struct tile_region {
     struct rect area;       // position and size in global coordinates
     int         rows;
