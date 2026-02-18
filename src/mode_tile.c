@@ -358,7 +358,7 @@ void tile_mode_render(struct state *state, void *mode_state, cairo_t *cairo) {
     char label_unselected_str[label_str_max_len];
 
     if (ms->regions != NULL) {
-        // Region-based rendering: iterate over each monitor's region.
+        // Render cells in each exclusive sub-region.
         for (int ri = 0; ri < ms->num_regions; ri++) {
             struct tile_region *r = &ms->regions[ri];
 

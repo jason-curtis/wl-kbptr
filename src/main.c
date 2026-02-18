@@ -120,6 +120,7 @@ bool compute_initial_area(struct state *state, struct rect *initial_area) {
         struct overlay_surface *overlay;
         wl_list_for_each (overlay, &state->overlay_surfaces, link) {
             struct output *o = overlay->output;
+            if (o == NULL) continue;
             if (o->x < min_x) min_x = o->x;
             if (o->y < min_y) min_y = o->y;
             if (o->x + o->width > max_x) max_x = o->x + o->width;
@@ -932,7 +933,14 @@ int main(int argc, char **argv) {
             break;
 
         case 'A':
-            state.config.general.all_outputs = true;
+            // Push as a cli_config so it is applied after the config file,
+            // giving the CLI flag precedence over any file setting.
+            if (num_cli_configs >= cli_configs_len) {
+                cli_configs_len += 10;
+                cli_configs =
+                    realloc(cli_configs, cli_configs_len * sizeof(char *));
+            }
+            cli_configs[num_cli_configs++] = "all_outputs=true";
             break;
 
         case 'p':
