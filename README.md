@@ -220,7 +220,7 @@ bind=$mainMod,g,exec,hyprctl keyword cursor:inactive_timeout 0; hyprctl keyword 
 
 By default, `wl-kbptr` shows its overlay only on the currently focused output. The `--all-outputs` / `-A` flag spans the overlay across all connected outputs simultaneously, so you don't need to focus the right display before invoking it.
 
-> **Note:** Multi-monitor mode is currently implemented for **tile mode only**. Floating mode multi-monitor support is not yet available.
+> **Note:** Multi-monitor mode is implemented for **tile mode** and **floating mode**. For floating mode with `mode_floating.source=detect`, targets are detected on each output independently and combined. For floating mode with stdin input, pass areas in global coordinates.
 
 ### Usage
 
