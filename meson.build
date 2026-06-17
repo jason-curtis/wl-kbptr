@@ -52,6 +52,7 @@ sources = [
   'src/mode_tile.c',
   'src/mode_floating.c',
   'src/mode_bisect.c',
+  'src/mode_kbd.c',
   'src/mode_split.c',
   'src/mode_click.c',
   'src/utils.c',

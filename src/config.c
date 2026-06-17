@@ -361,6 +361,8 @@ struct section_def {
     FIELD(struct mode_floating_config, name, default_value, parse, free)
 #define MB_FIELD(name, default_value, parse, free) \
     FIELD(struct mode_bisect_config, name, default_value, parse, free)
+#define MK_FIELD(name, default_value, parse, free) \
+    FIELD(struct mode_kbd_config, name, default_value, parse, free)
 #define MS_FIELD(name, default_value, parse, free) \
     FIELD(struct mode_split_config, name, default_value, parse, free)
 #define MC_FIELD(name, default_value, parse, free) \
@@ -418,6 +420,23 @@ static struct section_def section_defs[] = {
         MB_FIELD(odd_area_bg_color, "#0034", parse_color, noop),
         MB_FIELD(odd_area_border_color, "#0048", parse_color, noop),
         MB_FIELD(history_border_color, "#3339", parse_color, noop)
+    ),
+    SECTION(
+        mode_kbd,
+        MK_FIELD(keys, "qwertyuiop asdfghjkl; zxcvbnm,./", parse_str, free_str),
+        MK_FIELD(square, "true", parse_bool, noop),
+        MK_FIELD(label_color, "#fffd", parse_color, noop),
+        MK_FIELD(label_font_size, "20", parse_double, noop),
+        MK_FIELD(label_font_family, "sans-serif", parse_str, free_str),
+        MK_FIELD(label_padding, "12", parse_double, noop),
+        MK_FIELD(pointer_size, "20", parse_double, noop),
+        MK_FIELD(pointer_color, "#e22d", parse_color, noop),
+        MK_FIELD(unselectable_bg_color, "#2226", parse_color, noop),
+        MK_FIELD(even_area_bg_color, "#0304", parse_color, noop),
+        MK_FIELD(even_area_border_color, "#0408", parse_color, noop),
+        MK_FIELD(odd_area_bg_color, "#0034", parse_color, noop),
+        MK_FIELD(odd_area_border_color, "#0048", parse_color, noop),
+        MK_FIELD(history_border_color, "#3339", parse_color, noop)
     ),
     SECTION(
         mode_split, MS_FIELD(pointer_size, "20", parse_double, noop),
